@@ -18,6 +18,7 @@
 
 #define WM_TRAY      (WM_APP + 1)
 #define ID_TIMER     1
+#define ID_RETURN    2
 #define TICK_MS      1000
 #define ID_ON        100
 #define ID_OFF       101
@@ -97,7 +98,11 @@ static void addTrayIcon(void)
     applyState();
 }
 
-#define JIGGLE_PX 20
+#define JIGGLE_PX      20
+#define JIGGLE_HOLD_MS 200   /* how long the pointer stays out, so you can see it */
+
+static POINT g_home, g_out;   /* where the pointer was, and where we moved it */
+static BOOL  g_isOut;
 
 /* Map a screen pixel to SendInput's 0..65535 virtual-desktop coordinates. */
 static LONG toAbs(LONG v, int origin, int size)
@@ -106,34 +111,46 @@ static LONG toAbs(LONG v, int origin, int size)
 }
 
 /*
- * Move the pointer JIGGLE_PX pixels sideways and back, then pin it to where
- * it was. Absolute moves keep the distance exact regardless of pointer
- * speed/acceleration settings, and still count as real input for idle timers.
+ * Absolute moves keep the distance exact regardless of pointer speed/
+ * acceleration settings, and count as real input for idle timers.
  */
-static void jiggle(void)
+static void moveTo(POINT p)
 {
-    INPUT in[2];
-    POINT pt;
-    int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    LONG x2;
+    INPUT in;
+    memset(&in, 0, sizeof in);
+    in.type = INPUT_MOUSE;
+    in.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    in.mi.dx = toAbs(p.x, GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_CXVIRTUALSCREEN));
+    in.mi.dy = toAbs(p.y, GetSystemMetrics(SM_YVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    SendInput(1, &in, sizeof in);
+    SetCursorPos(p.x, p.y);   /* undo any rounding from the mapping */
+}
 
-    GetCursorPos(&pt);
+/* Step 1: move the pointer JIGGLE_PX sideways; ID_RETURN brings it back. */
+static void jiggleOut(HWND hwnd)
+{
+    int right = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+
+    GetCursorPos(&g_home);
+    g_out = g_home;
     /* Go right, unless that would run off the desktop; then go left. */
-    x2 = (pt.x + JIGGLE_PX < vx + vw) ? pt.x + JIGGLE_PX : pt.x - JIGGLE_PX;
+    g_out.x += (g_home.x + JIGGLE_PX < right) ? JIGGLE_PX : -JIGGLE_PX;
 
-    memset(in, 0, sizeof in);
-    in[0].type = in[1].type = INPUT_MOUSE;
-    in[0].mi.dwFlags = in[1].mi.dwFlags =
-        MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-    in[0].mi.dx = toAbs(x2,   vx, vw);
-    in[1].mi.dx = toAbs(pt.x, vx, vw);
-    in[0].mi.dy = in[1].mi.dy = toAbs(pt.y, vy, vh);
-    SendInput(2, in, sizeof(INPUT));
+    moveTo(g_out);
+    g_isOut = TRUE;
+    SetTimer(hwnd, ID_RETURN, JIGGLE_HOLD_MS, NULL);
+}
 
-    SetCursorPos(pt.x, pt.y);   /* undo any rounding from the mapping */
+/* Step 2: put it back, unless the user has grabbed the mouse meanwhile. */
+static void jiggleBack(HWND hwnd)
+{
+    POINT now;
+    KillTimer(hwnd, ID_RETURN);
+    g_isOut = FALSE;
+
+    GetCursorPos(&now);
+    if (now.x == g_out.x && now.y == g_out.y)
+        moveTo(g_home);
 }
 
 static DWORD idleMs(void)
@@ -174,9 +191,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
     case WM_TIMER:
+        if (wp == ID_RETURN)
+            jiggleBack(hwnd);
         /* Half a tick of slack so e.g. 60s fires at ~60s idle, not ~61s. */
-        if (g_enabled && idleMs() + TICK_MS / 2 >= g_intervalMs)
-            jiggle();
+        else if (g_enabled && !g_isOut && idleMs() + TICK_MS / 2 >= g_intervalMs)
+            jiggleOut(hwnd);
         return 0;
 
     case WM_TRAY:
@@ -203,6 +222,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_DESTROY:
         KillTimer(hwnd, ID_TIMER);
+        if (g_isOut)
+            jiggleBack(hwnd);
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         SetThreadExecutionState(ES_CONTINUOUS);
         PostQuitMessage(0);
@@ -246,6 +267,9 @@ void WINAPI entry(void)
     mutex = CreateMutexW(NULL, TRUE, L"Local\\JiggleBuddy");
     if (GetLastError() == ERROR_ALREADY_EXISTS)
         ExitProcess(0);
+
+    /* Work in real pixels on scaled displays (also gives a crisp tray icon). */
+    SetProcessDPIAware();
 
     secs = parseSeconds(GetCommandLineW());
     if (secs >= 1)

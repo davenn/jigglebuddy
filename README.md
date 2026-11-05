@@ -7,8 +7,8 @@ It's one C file with no runtime dependencies: no CRT, .NET or installer.
 
 - Sits in the system tray as a dot: **green** means on, **grey** means off.
 - When you've been idle for the interval (default **60 s**), it nudges the mouse
-  20 px sideways and back, then puts the cursor exactly where it was. It happens
-  instantly, so you won't see it move.
+  20 px sideways, holds it there for 0.2 s so you can see it, then puts it back
+  exactly where it was. If you move the mouse in that moment, it leaves it alone.
 - While enabled, it also tells Windows not to sleep or turn off the display.
 - It does nothing while you're actively using the mouse or keyboard.
 
@@ -21,7 +21,8 @@ It's one C file with no runtime dependencies: no CRT, .NET or installer.
 | `jigglebuddy.exe 30`  | Start with a custom idle interval in seconds   |
 
 The interval is how long you have to be idle before it jiggles. Hover the tray
-icon to see the current state and interval.
+icon to see the current state and interval. To check it's working, pick
+**1 second** and leave the mouse alone.
 
 Only one copy runs at a time. To start it at login, put a shortcut in
 `shell:startup` (press Win+R and type `shell:startup`).
