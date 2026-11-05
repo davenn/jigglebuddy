@@ -7,7 +7,8 @@ It's one C file with no runtime dependencies: no CRT, .NET or installer.
 
 - Sits in the system tray as a dot: **green** means on, **grey** means off.
 - When you've been idle for the interval (default **60 s**), it nudges the mouse
-  1 px and back, then puts the cursor exactly where it was. You won't see it move.
+  20 px sideways and back, then puts the cursor exactly where it was. It happens
+  instantly, so you won't see it move.
 - While enabled, it also tells Windows not to sleep or turn off the display.
 - It does nothing while you're actively using the mouse or keyboard.
 

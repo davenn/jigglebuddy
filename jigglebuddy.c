@@ -97,21 +97,43 @@ static void addTrayIcon(void)
     applyState();
 }
 
-/* Nudge the pointer 1px and back, then pin it to where it was. */
+#define JIGGLE_PX 20
+
+/* Map a screen pixel to SendInput's 0..65535 virtual-desktop coordinates. */
+static LONG toAbs(LONG v, int origin, int size)
+{
+    return MulDiv(v - origin, 65535, size > 1 ? size - 1 : 1);
+}
+
+/*
+ * Move the pointer JIGGLE_PX pixels sideways and back, then pin it to where
+ * it was. Absolute moves keep the distance exact regardless of pointer
+ * speed/acceleration settings, and still count as real input for idle timers.
+ */
 static void jiggle(void)
 {
     INPUT in[2];
     POINT pt;
+    int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    LONG x2;
+
     GetCursorPos(&pt);
+    /* Go right, unless that would run off the desktop; then go left. */
+    x2 = (pt.x + JIGGLE_PX < vx + vw) ? pt.x + JIGGLE_PX : pt.x - JIGGLE_PX;
 
     memset(in, 0, sizeof in);
     in[0].type = in[1].type = INPUT_MOUSE;
-    in[0].mi.dwFlags = in[1].mi.dwFlags = MOUSEEVENTF_MOVE;
-    in[0].mi.dx = 1;
-    in[1].mi.dx = -1;
+    in[0].mi.dwFlags = in[1].mi.dwFlags =
+        MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    in[0].mi.dx = toAbs(x2,   vx, vw);
+    in[1].mi.dx = toAbs(pt.x, vx, vw);
+    in[0].mi.dy = in[1].mi.dy = toAbs(pt.y, vy, vh);
     SendInput(2, in, sizeof(INPUT));
 
-    SetCursorPos(pt.x, pt.y);
+    SetCursorPos(pt.x, pt.y);   /* undo any rounding from the mapping */
 }
 
 static DWORD idleMs(void)
