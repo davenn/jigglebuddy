@@ -13,11 +13,14 @@ It's one C file with no runtime dependencies: no CRT, .NET or installer.
 
 ## Usage
 
-| Action                | Result                  |
-|-----------------------|-------------------------|
-| Left-click tray icon  | Toggle on/off           |
-| Right-click tray icon | Menu: Enabled / Exit    |
-| `jigglebuddy.exe 30`       | Use a 30-second idle interval (minimum 5) |
+| Action                | Result                                         |
+|-----------------------|------------------------------------------------|
+| Left-click tray icon  | Toggle on/off                                  |
+| Right-click tray icon | Menu: 1 / 15 / 30 / 60 seconds, On / Off, Exit |
+| `jigglebuddy.exe 30`  | Start with a custom idle interval in seconds   |
+
+The interval is how long you have to be idle before it jiggles. Hover the tray
+icon to see the current state and interval.
 
 Only one copy runs at a time. To start it at login, put a shortcut in
 `shell:startup` (press Win+R and type `shell:startup`).

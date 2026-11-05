@@ -6,7 +6,7 @@
  * shell32/gdi32. Builds to a few KB.
  *
  *   Left-click tray icon : toggle on/off
- *   Right-click          : menu (Enabled / Exit)
+ *   Right-click          : menu (1 / 15 / 30 / 60 seconds, On / Off, Exit)
  *   Command line         : jigglebuddy.exe [seconds]   (idle interval, default 60)
  */
 
@@ -18,8 +18,13 @@
 
 #define WM_TRAY      (WM_APP + 1)
 #define ID_TIMER     1
-#define ID_TOGGLE    100
-#define ID_EXIT      101
+#define TICK_MS      1000
+#define ID_ON        100
+#define ID_OFF       101
+#define ID_EXIT      102
+#define ID_SECS      200   /* ID_SECS + i selects g_presets[i] */
+
+static const DWORD g_presets[] = { 1, 15, 30, 60 };
 
 static NOTIFYICONDATAW g_nid;
 static HICON g_iconOn, g_iconOff;
@@ -33,13 +38,6 @@ void *memset(void *d, int c, size_t n)
     unsigned char *p = d;
     while (n--) *p++ = (unsigned char)c;
     return d;
-}
-
-static void copyStr(WCHAR *dst, const WCHAR *src, int max)
-{
-    int i = 0;
-    for (; i < max - 1 && src[i]; i++) dst[i] = src[i];
-    dst[i] = 0;
 }
 
 /* Draw a small round icon at runtime: green when on, grey when off. */
@@ -86,8 +84,8 @@ static void applyState(void)
 
     g_nid.uFlags = NIF_ICON | NIF_TIP;
     g_nid.hIcon  = g_enabled ? g_iconOn : g_iconOff;
-    copyStr(g_nid.szTip, g_enabled ? L"JiggleBuddy: on" : L"JiggleBuddy: off",
-            ARRAYSIZE(g_nid.szTip));
+    wsprintfW(g_nid.szTip, L"JiggleBuddy: %s (%lus)",
+              g_enabled ? L"on" : L"off", g_intervalMs / 1000);
     Shell_NotifyIconW(NIM_MODIFY, &g_nid);
 }
 
@@ -126,8 +124,20 @@ static DWORD idleMs(void)
 static void showMenu(HWND hwnd)
 {
     POINT pt;
+    WCHAR label[32];
+    UINT i, n = ARRAYSIZE(g_presets);
     HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING | (g_enabled ? MF_CHECKED : 0), ID_TOGGLE, L"&Enabled");
+
+    for (i = 0; i < n; i++) {
+        wsprintfW(label, g_presets[i] == 1 ? L"%lu second" : L"%lu seconds", g_presets[i]);
+        AppendMenuW(m, MF_STRING, ID_SECS + i, label);
+        if (g_presets[i] * 1000 == g_intervalMs)
+            CheckMenuRadioItem(m, ID_SECS, ID_SECS + n - 1, ID_SECS + i, MF_BYCOMMAND);
+    }
+    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(m, MF_STRING, ID_ON,  L"&On");
+    AppendMenuW(m, MF_STRING, ID_OFF, L"O&ff");
+    CheckMenuRadioItem(m, ID_ON, ID_OFF, g_enabled ? ID_ON : ID_OFF, MF_BYCOMMAND);
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, ID_EXIT, L"E&xit");
 
@@ -142,7 +152,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
     case WM_TIMER:
-        if (g_enabled && idleMs() >= g_intervalMs - 1000)
+        /* Half a tick of slack so e.g. 60s fires at ~60s idle, not ~61s. */
+        if (g_enabled && idleMs() + TICK_MS / 2 >= g_intervalMs)
             jiggle();
         return 0;
 
@@ -156,11 +167,15 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
 
     case WM_COMMAND:
-        if (LOWORD(wp) == ID_TOGGLE) {
-            g_enabled = !g_enabled;
-            applyState();
-        } else if (LOWORD(wp) == ID_EXIT) {
-            DestroyWindow(hwnd);
+        switch (LOWORD(wp)) {
+        case ID_ON:   g_enabled = TRUE;  applyState(); break;
+        case ID_OFF:  g_enabled = FALSE; applyState(); break;
+        case ID_EXIT: DestroyWindow(hwnd); break;
+        default:
+            if (LOWORD(wp) >= ID_SECS && LOWORD(wp) < ID_SECS + ARRAYSIZE(g_presets)) {
+                g_intervalMs = g_presets[LOWORD(wp) - ID_SECS] * 1000;
+                applyState();
+            }
         }
         return 0;
 
@@ -211,7 +226,7 @@ void WINAPI entry(void)
         ExitProcess(0);
 
     secs = parseSeconds(GetCommandLineW());
-    if (secs >= 5)
+    if (secs >= 1)
         g_intervalMs = secs * 1000;
 
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
@@ -235,8 +250,8 @@ void WINAPI entry(void)
     g_nid.uID    = 1;
     addTrayIcon();
 
-    /* Check twice per interval so we jiggle at most ~interval after going idle. */
-    SetTimer(hwnd, ID_TIMER, g_intervalMs / 2, NULL);
+    /* Check idle time once a second; cheap, and lets the interval change live. */
+    SetTimer(hwnd, ID_TIMER, TICK_MS, NULL);
 
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
